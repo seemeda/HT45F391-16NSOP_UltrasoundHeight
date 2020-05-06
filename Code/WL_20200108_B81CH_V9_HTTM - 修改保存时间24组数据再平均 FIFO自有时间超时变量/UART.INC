@@ -1,0 +1,10 @@
+
+
+
+EXTERN 	SBR_UART_READ			:NEAR
+
+EXTERN 	SBR_UART_SND			:NEAR
+
+EXTERN  __BUFF_DATA	            :BYTE
+EXTERN 	RX_DATA					:BYTE
+EXTERN  F_FULL                 :BIT

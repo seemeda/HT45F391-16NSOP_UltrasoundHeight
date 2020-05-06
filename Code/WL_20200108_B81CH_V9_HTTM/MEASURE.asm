@@ -5,6 +5,12 @@ INCLUDE USER.INC
 INCLUDE	UART.INC
 EXTERN __SYS_TM0_INT_BACK	:NEAR
 
+;;TEST+---------------
+EXTERN F_MY_TEST:BIT
+EXTERN F_MY_TEST_VAR:BIT
+EXTERN __MY_FIFO_INT_BACK	:NEAR
+;;---------------
+
 RAMBANK		0		RAMBANK0
 RAMBANK0	.SECTION	'DATA'
 
@@ -117,16 +123,18 @@ RAM0_rloop:
 	JMP	RAM0_rloop
 	CLR	MP0
 L_GET_SENSOR_FREQ:
+	;选择-->带通滤波器中心频率开关控制位
 	MOVF	TBLP,OFFSET CFG_SYS
 	TABRDL	ACC
 	SZ	ACC.0
 	SET	__F_SENSOR_58K
 L_INI_WDT:
+	;看门狗初始化,使能看门狗，2^18/fsub
 	MOV	A,10101111B
 	MOV	WDTC,A
 	
 L_INI_SCF:
-	
+	;开关电容滤波器初始化
 	CLR	SCFCTL
 	SET	SCFOUT
 	SZ	__F_SENSOR_58K
@@ -136,7 +144,7 @@ L_INIT_INT:
 	CLR	INTC0
 	CLR	INTC1
 	CLR	INTC2
-	MOV	A,00000010b;00000001b
+	MOV	A,00000010b;00000001b 外部引脚中断PA6
 	MOV	INTEDGE,A
 		
 ;;--------------------------------------------
@@ -178,6 +186,7 @@ L_INIT_TIMER0:
 	JMP	L_EXTERNAL_CLK
 	;JMP	L_INTERNAL_CLK
 L_EXTERNAL_CLK:
+	;;外部时钟输入引脚PA3/TCK0
 	SET	__F_TM0_EXTERNAL
 	MOVF	TM0AL,10 ;10  ;10 100K  200  2M 
 	MOVF	TM0AH,0
@@ -207,6 +216,7 @@ $1:
 __SYS_TM0_INT:
 	CLR	TA0F	
 	SET	__F_TIMER
+	INC  __R_BUF
 	INC 	__R_TIMER_GAIN
 	INC	__R_TIMER_100US	
 	MOV	A,__R_TIMER_100US
@@ -219,7 +229,7 @@ __SYS_TM0_INT:
 		
 CCRA_CTM_INT_EXIT:
 	JMP	__SYS_TM0_INT_BACK
-
+	
 	
 ;************* SUBROUTINE: GET REF VALUE *********************
 ;;STACK: 2 
@@ -284,7 +294,7 @@ $1:
 	MOV	A,5
 	ADDM	A,__R_BIAS
 L_GET_BIAS_EXIT:
-	;MOVF	__R_BIAS,15	; // __SBR_GET_BIAS ���ɿ�����ʹ�ã�
+	;MOVF	__R_BIAS,15	; // __SBR_GET_BIAS 不可靠，不使用；
 	RET
 
 ;************* SUBROUTINE: GET DVCM VALUE ********************
@@ -495,7 +505,7 @@ $4:
 	JMP	L_GET_AFTER_SHOCK_EXIT
 
 
-;;�������ޣ��ȴ��ڶ����½�
+;;降低门限，等待第二次下降
 ;	MOV	A,SUMCMP
 ;	SUB	A,5
 ;	MOV	SUMCMP,A
@@ -545,7 +555,7 @@ L_CHECK_AFTERSHOCK_TIME:
 ;;OUTPUT: __R_TIME_H, __R_TIME_M, __R_TIME_L, __F_GET_DISTANCE
 ;*************************************************************
 __SBR_DISTANCE_MEASURE:
-
+	;;SCFCTL 寄存器配置Fc=40KHz，SCFO 引脚功能SCFOUT，增益置1。（0~30）
 	CLR	WDT
 	MOVF	TBLP,OFFSET CFG_GAIN
 	TABRDL	ACC
@@ -556,10 +566,9 @@ __SBR_DISTANCE_MEASURE:
 	
 	SZ	__F_SENSOR_58K
 	SET	SCBWSL
-
 	CLR	__F_GET_DISTANCE
-	JMP	L_GENERATE_ULTRASONIC
-	
+	JMP	L_ULTRASONIC_DISTANCE_MEASURE
+IF 0 ;;TEST	
 	CLR	__F_CONTINUOUS_NOISE
 	
 L_NOISE_SAMPLE:	
@@ -646,101 +655,82 @@ $0:
 	SDZ	__R_TEMP4
 	JMP	L_NOISE_SAMPLE_LOOP
 	
-	
+ENDIF ;;TEST+	
 	
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-L_GENERATE_ULTRASONIC:	
+L_ULTRASONIC_DISTANCE_MEASURE:	
 
 	CLR		T0ON	
-	CLR		__R_TIMER_50MS
+	;;CLR		__R_TIMER_50MS
 	CLR		__R_TIMER_100US
 	CLR		__F_TIMEUP
 	CLR		__R_TIMER_GAIN
 	CLR		__R_GAIN_CNT
  	CLR     __R_MAX_DATA		
-    CLR     __R_DET_CNT
-    CLR     __R_MAXDET_CNT		   
-    CLR     __R_DET_TIME		    
+    ;;CLR     __R_DET_CNT
+    ;;CLR     __R_MAXDET_CNT		   
+    ;;CLR     __R_DET_TIME		    
     CLR    __R_DET_TIME_H		
     CLR    __R_DET_TIME_M		
     CLR    __R_DET_TIME_L
-    CLR    __R_MIN_CNT 
-    CLR    __F_GET_DOW
-    CLR     __F_GET_UP
-    CLR     __R_DET_DATA
-    CLR	   __R_MAX_CNT
+    ;;CLR    __R_MIN_CNT 
+    ;;CLR    __F_GET_DOW
+    ;;CLR     __F_GET_UP
+    ;;CLR     __R_DET_DATA
+    ;;CLR	   __R_MAX_CNT
     CLR     __R_STOP_CNT         
-    CLR   __R_START_CNT         
-	SET		T0ON
-
-	CALL		__SBR_GENERATE_ULTRASONIC
-    SET		PB2
-	SET		TA0E	
-
-;	MOV		A,__R_BIAS
-;	ADD		A, 40 ;50	;60
-;	MOV		__R_ADCOMPARE_VALUE,A  
-;;	MOVF		__R_ADCOMPARE_VALUE,35        
-;	MOVF		SUMCMP,__R_ADCOMPARE_VALUE	
-	
-L_START_FIFO:
-	
+    ;;CLR   __R_START_CNT         
+	CLR   	__R_TIME_H 
+	CLR   	__R_TIME_L
 	CALL	__INI_FIFO
 	CLR		FIFO10E
 	CLR		FIFO10F
-
-
-L_START_SAMPLE:
-	CALL 	__SBR_GAIN_CTRL
-	SZ		__F_TIMEUP
-	JMP		L__SBR_DISTANCE_MEASURE_EXIT
-	 
+	
 	CLR		ENVCMPF
+	
 	CLR		__F_TIMER
-    CALL	__INI_FIFO
-    CLR		FIFO10F
-L_SAMPLING:
+	CLR 	F_MY_TEST	
+	
+	CALL	__SBR_GENERATE_ULTRASONIC
+	SET		T0ON ;;TEST+
+	SET		TA0E
+    CLR		PB2
+	
+	
+AEP_ENVCMPINT: ;;退出此 AEP_ENVCMPINT 循环条件：1.超时20ms  2.ENVCMPF 自动包络比较器中断
+	CLR 	WDT ;;TEST++
 	SZ		__F_TIMEUP
-	JMP		L__SBR_DISTANCE_MEASURE_EXIT	
+	JMP		L_ULTRASONIC_DISTANCE_MEASURE_EXIT	
 	CALL 	__SBR_GAIN_CTRL
 	SZ		__F_TIMER
 	CALL	__SBR_REF_CTRL	
-;	
-    SNZ     __F_GET_DISTANCE  
-    JMP     $0
-    JMP		L_SAVE_TIME
-$0:
 	SNZ		ENVCMPF
-	JMP		L_SAMPLING
-	CALL	__INI_FIFO
-    CLR		FIFO10F
+	JMP		AEP_ENVCMPINT
+	;;只能得到一个大约的时间,需要找到峰值，并初始配置FIFO开始存储FIFO值，
+	;;FSTART=1时自动包络处理机制通过硬件自动开始向 FIFO 写入数据或从 FIFO 读取数据
     SET	    FSTART	
-L_SAVE_TIME:	
-	SET		T0PAU							
-	MOVF	__R_TIME_H,__R_TIMER_100US 
-	MOVF	__R_TIME_M,TM0DH
-	MOVF	__R_TIME_L,TM0DL
-	CLR		T0PAU
-;	SZ      __F_GET_DISTANCE
-;	JMP     otherProcess
-;	MOV     A,  4 
-;	XORM    A,	PB
-    ;CLR		PB2
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	
-otherProcess:	
+	SET 	FIFO10E	
 
-L_FILTER:
-;	SET	FSTART
+;;40KHz的正弦波一个周期25us半个周期12.5us	
+;;完成10笔FIFOOUT数据约125us，FIFOOUT的一笔数据是半个周期的数据取绝对值，
+;;LOOP_DETECT_PEAK大约等待104us,说明LOOP_FIFOOUT处理数据较快，不影响后续FIFO中断数据的处理
+;;所以FIFO有足够时间在LOOP_FIFOOUT执行完成后，FIFO还没完成10笔数据写入FIFOOUT,要原地等待104us.
+;;注意:LOOP_FIFOOUT程序处理数据要尽量快，时间不能大于125us,即FIFOOUT被写入新数据的时间间隔.
+LOOP_DETECT_PEAK:      
+    CLR     __R_START_CNT 
+	MOVF	__R_TEMP0,10
+	MOVF	MP0,OFFSET __R_DATA	
+	SET		PB2 ;;TEST
+	;;等待10-level FIFO 中断请求完成保存时间和取FIFOOUT数据
 	CLR	WDT
-	SZ	     __F_TIMEUP
-	JMP	     L__SBR_DISTANCE_MEASURE_EXIT	
-	SNZ	     FIFO10F
-	JMP	     $-4
-	CLR	     FIFO10F 
-	SET		 T0PAU							
-	MOVF	__R_DET_TIME_H, __R_TIMER_100US 
-	MOVF	__R_DET_TIME_L, TM0DL
-	CLR		T0PAU
+	SZ		__F_TIMEUP
+	JMP		L_ULTRASONIC_DISTANCE_MEASURE_EXIT	
+	SNZ		F_MY_TEST 
+	JMP		$-4	
+	CLR		F_MY_TEST
+	CLR		PB2 ;;TEST
+	IF 1 ;;
+	;; 注意:在FIFO中断读取FIFOOUT数据时，不知为什么会导致测试距离不准确？而且测距误差没有线性，但稳定度不变，放在这里也稳定.
 	MOVF	__R_DATA[0],FIFOOUT
 	MOVF	__R_DATA[1],FIFOOUT
 	MOVF	__R_DATA[2],FIFOOUT
@@ -751,149 +741,63 @@ L_FILTER:
 	MOVF	__R_DATA[7],FIFOOUT
 	MOVF	__R_DATA[8],FIFOOUT
 	MOVF	__R_DATA[9],FIFOOUT	
-	CALL	__INI_FIFO
-	CLR		FIFO10F
-;	CLR	    FSTART
+	;;读取完FIFOOUT后，应立即初始化FIFO并启动自动包络处理向FIFO写入数据
+	CLR		FSTART
+	CLR		FULL
+	CLR		FRESET
 	SET	    FSTART
-	SZ      __F_GET_DISTANCE
-	JMP    $0
-	CLR    __R_DET_CNT                      
-	CLR    __R_MAX_CNT
-	CLR    __R_MAXDET_CNT
-	CLR    __F_GET_UP
-	CLR    __R_MIN_CNT
-	CLR     __R_STOP_CNT
-$0:
-   ; CLR     __R_STOP_CNT         
-    CLR     __R_START_CNT 
-    CLR     __R_TEMP6
-	MOVF	__R_TEMP0,0
-	MOVF	__R_TEMP2,10
-	MOVF	MP0,OFFSET __R_DATA	
-L_0:
-    INC     __R_DET_CNT 
+	ENDIF
+	
+LOOP_FIFOOUT:		;;LOOP_FIFOOUT:第一次进来执行54us，后面执行与34us
     INC     __R_START_CNT      
-    MOVF	__R_TEMP6,IAR0
     MOV     A,__R_MAX_DATA
-    SUB     A,__R_TEMP6
+    SUB     A,IAR0
     SZ      C 
-    JMP     $0;L_1 
-    CLR     __R_MIN_CNT
-    MOV     A,__R_DET_CNT
-    SUB     A,__R_MAXDET_CNT
-    SUB     A,4;4
-    SNZ     C
-    JMP     $1
-    MOVF    __R_MAX_DATA, IAR0
-    MOV     A,1
-	ADDM    A,__R_MAX_DATA 
-	SZ      C
-	SET    __R_MAX_DATA
-	SZ     __F_GET_UP
-    JMP     $2 
-    SET     __F_GET_UP
-    JMP     L_1 
-$0:         
-    INC    __R_MIN_CNT
-    MOV     A,__R_MIN_CNT
-    SUB     A,3;5
-    SNZ     C
-    JMP     L_1
-    CLR     __R_MAX_CNT
-    CLR     __F_GET_UP
-    JMP     L_1    
-$2: 
-    INC     __R_MAX_CNT
-    MOV     A,__R_MAX_CNT
-    SUB     A,2
-    SNZ     C
-    JMP     L_1 
-    CLR     __R_MAX_CNT
-    CLR     __F_GET_UP   
-$1:    
+    JMP     $0 	;__R_MAX_DATA >= IAR0
+    ;__R_MAX_DATA < IAR0   更新最大值并保存更新时间,记录这笔数据是第几个半周期的
     MOVF    __R_MAX_DATA, IAR0
     MOV     A,1
 	ADDM    A,__R_MAX_DATA
 	SZ      C
 	SET     __R_MAX_DATA
-	MOVF    __R_MAXDET_CNT,__R_DET_CNT 
-	MOVF   __R_F_DET_TIME_H,__R_DET_TIME_H 
-	MOVF   __R_F_DET_TIME_L,__R_DET_TIME_L
-	MOVF    __R_STOP_CNT,__R_START_CNT
-	MOV    A, 10
-	SUB    A, __R_STOP_CNT
-	MOV     __R_STOP_CNT,A 	       
-    MOV     A,4
-	XORM    A,	PB 
-;	SNZ    __F_GET_DISTANCE
-;	JMP     L_1
-;	MOV    A,__R_DET_TIME_H
-;	SUB    A,__R_DET_TIME                         
-;	SUB    A,20
-;	SNZ    C
-;	JMP    L_1
-;	JMP    L_STOP_DISTANCE
-;	MOV     A,__R_MAXDET_CNT
-;	SUB     A,__R_MIN_CNT
-;	SNZ     C
-;	JMP     L_1                  ;;;__R_MAXDET_CNT < __R_MIN_CNT
-;	SUB     A,8                  ;;;__R_MAXDET_CNT > __R_MIN_CNT,>8
-;	SNZ     C
-;	JMP     L_1
-;    MOV     A,4
-;	XORM    A,	PB  
-L_1:    
-	MOV		A,IAR0
-	SUB		A,__R_ADCOMPARE_VALUE;20 ;42 ;29 ;35 ;30
-	SNZ		C
-	JMP		L_3
-	JMP		L_2
-L_2:
-	INC		__R_TEMP0 
-	JMP		L_3
-L_3:   
+	MOVF   	__R_TIME_H,__R_DET_TIME_H 
+	MOVF   	__R_TIME_L,__R_DET_TIME_L
+	MOV 	A, 10
+	SUB		A, __R_START_CNT
+	MOV		__R_STOP_CNT, A	;;记录这笔数据是第几个半周期的,FIFO中断保存的时间减去x*12.5us,得到峰值的时间
+	       
+$0:    ;__R_MAX_DATA >= IAR0 不更新时间,直接进行下笔数据比较
 	INC		MP0
-	SDZ		__R_TEMP2
-	JMP		L_0
-	MOV		A,__R_TEMP0
-	SUB		A,5
-	SZ		C
-	JMP		L_GET_DISTANCE	
-;	CLR		__R_TIME_H
-;	CLR		__R_TIME_L
-;	CLR		__R_TIME_M
-    SNZ     __F_GET_DISTANCE
-	JMP		L_SAMPLING		
-L_GET_DISTANCE:  
+	SDZ		__R_TEMP0
+	JMP		LOOP_FIFOOUT
+	
+LOOP_DETECT_TIME:  
     SNZ    __F_GET_DISTANCE
 	JMP    $0
 	JMP    $1
 $0:	
     SET	   __F_GET_DISTANCE
-	CLR	   __F_DISTANCE_FAIL
-	MOVF   __R_DET_TIME,  __R_TIME_H 
-;	MOVF   __R_F_DET_TIME_H,__R_TIME_H 
-;	MOVF   __R_F_DET_TIME_L,__R_TIME_L         
+	CLR	   __F_DISTANCE_FAIL	
+	MOVF   __R_BUF,0   
 $1:	
-	MOV   A,__R_TIME_H
-	SUB   A,__R_DET_TIME                       
-	SUB   A,20
+	MOV   A,__R_BUF                       
+	SUB   A,7 ;;20=2MS, 10=1MS
 	SNZ   C
-	JMP   L_SAMPLING 
-L_STOP_DISTANCE:
-    CLR	 FSTART
-  
-    ;MOVF	RX_DATA,0
-;	CALL	SBR_UART_SND
-;    MOVF	RX_DATA,__R_F_DET_TIME_H 
-;	CALL	SBR_UART_SND
-;	MOVF	RX_DATA,__R_F_DET_TIME_L 
-;	CALL	SBR_UART_SND
-;	MOVF	RX_DATA, __R_MAXDET_CNT 
-;	CALL	SBR_UART_SND
-	MOVF   __R_TIME_H,__R_F_DET_TIME_H
-	MOVF   __R_TIME_L,__R_F_DET_TIME_L
-	MOVF	__R_TEMP7,125
+	JMP		LOOP_DETECT_PEAK
+
+;;
+;;最大值是在FIFO中断保存的时间减去 x*12.5us, 得到峰值的时间
+;;计算回波达到的峰值时间和刚接收回波前沿时间(超声波经过这段距离的时间)
+;;
+TIME_OF_ARRIVAL: 
+	CLR		PB2;;TEST+
+    CLR	 	FSTART
+  	CLR 	FIFO10E ;;关闭FIFO中断
+  	CLR		T0PAU   ;;运行TM0计数器
+	CLR		__R_GAIN_CNT
+	CALL 	__SBR_GAIN_CTRL
+	IF 1 ;;TEST++
+	MOVF	__R_TEMP7,125  ;;半周期12.5us，扩大10倍
 	MOVF	__R_TEMP6,0
 	MOVF	__R_TEMP5,0
 	MOVF	__R_TEMP8,0
@@ -910,34 +814,89 @@ L_STOP_DISTANCE:
 	MOVF	__R_TEMP8,064H
 	CALL    __SBR_DIVIDE_6BY3
 	MOV     A,__R_TIME_H
-	SUB     A,2                
+	SUB     A,2
+	SNZ		 C
+	CLR		 __F_GET_DISTANCE                  
 	MOV     __R_TIME_H,A
 	MOV     A,20
-	ADD    A,__R_TIME_L           
-    SUB    A,__R_TEMP5      
-    MOV    __R_TIME_L,A
-;	MOV     A,__R_TEMP5
-;	ADDM    A,__R_TIME_L
-             
-L__SBR_DISTANCE_MEASURE_EXIT:
+	ADD    	A,__R_TIME_L           
+    SUB    	A,__R_TEMP5      
+    MOV    	__R_TIME_L,A
+    ENDIF   
+L_ULTRASONIC_DISTANCE_MEASURE_EXIT:
 
-	CLR	FSTART
+	CLR		FSTART
+	CLR 	FIFO10E ;;TEST+
+  	CLR		T0PAU   ;;TEST+	运行TM0计数器
+  	
+;;test+	
+;;__F_TIMEUP延时20ms,这里延时20ms和Det_Loop循环也延时20ms，
+;;所以每发射触发脉冲测量一次至少需要40ms为一个周期
 
 	CLR	WDT
 	SNZ	__F_TIMEUP
-	JMP	$-2
+	JMP	$-2         
 	CLR	__F_TIMEUP
 ;	CLR	__R_TIMER_100US
 	
 	SZ	__F_GET_DISTANCE
-	JMP	L__SBR_DISTANCE_MEASURE_RET
+	JMP	L__DISTANCE_MEASURE_RET
 	SET	__F_DISTANCE_FAIL
 	MOVF	__R_TIME_H,0
 	MOVF	__R_TIME_M,0
 	MOVF	__R_TIME_L,0
 	
 	
-L__SBR_DISTANCE_MEASURE_RET:
+L__DISTANCE_MEASURE_RET:
+
+;;TEST+++++++++++++++++++++++++++
+IF 0 & __UART_DEBUG__ 
+	clr	EMI			
+
+	MOVF	TM1C0,28H
+	MOVF	TM1C1,03H
+IF 0	
+	MOVF	   MP0,OFFSET __R_DATA
+	MOVF    __R_TEMP2 , 10
+$0:
+    CLR     WDT
+	MOVF	RX_DATA,IAR0
+	CALL	SBR_UART_SND			
+	INC     MP0
+	SDZ	    __R_TEMP2
+	JMP     $0
+ENDIF	
+;	MOVF		RX_DATA, __R_DATA[0]
+;	CALL	SBR_UART_SND
+;
+;	MOVF		RX_DATA, __R_DATA[1]
+;	CALL	SBR_UART_SND
+		
+	MOVF	RX_DATA,__R_TIME_H
+	CALL	SBR_UART_SND
+	MOVF	RX_DATA,__R_TIME_L
+	CALL	SBR_UART_SND
+		
+	MOVF	RX_DATA,__R_GAIN_CNT
+	CALL	SBR_UART_SND	
+	
+	MOVF	RX_DATA,__R_ADCOMPARE_VALUE
+	CALL	SBR_UART_SND
+	
+	MOVF	RX_DATA,__R_MAX_DATA
+	CALL	SBR_UART_SND
+	
+	MOVF	RX_DATA,__R_STOP_CNT
+	CALL	SBR_UART_SND
+
+	MOVF	TM1AL,255 ;255				;255
+	MOVF	TM1AH,0
+	MOVF	TM1C0,00110000B
+	MOVF	TM1C1,11000001B		
+	SET	EMI	
+ENDIF 
+;;TEST+++++++++++++++++++++++++++
+
 	RET
 
 ;************* SUBROUTINE: CALCULATE DISTANCE**************
@@ -960,7 +919,15 @@ __SBR_CALC_DISTANCE:
 	SNZ	__F_GET_DISTANCE
 	JMP	__SBR_CALC_DISTANCE_EXIT
 
-;=============================================================	
+;=============================================================
+;;TEST+
+;;s = v*T/2
+;;INPUT: __R_TIME_H,__R_TIME_L
+;;		 __R_SOUND_SPEED_H,__R_SOUND_SPEED_L
+;;	v(cm/s)
+;;	T(时间__R_TIME_L的精度10us，__R_TIME_H的精度100us)
+;;OUTPUT:
+;;	s = v*T/20000 则距离的单位为mm
 L_CALC_DISTANCE:
 	CLR	__R_TEMP8
 	
@@ -1008,7 +975,7 @@ $3:
 ;	MOVF	__R_TEMP8,0D0H
 								
 	MOVF	__R_TEMP6,00H         
-	MOVF	__R_TEMP7,4EH
+	MOVF	__R_TEMP7,4EH	;;‭4E20H = 20000‬	
 	MOVF	__R_TEMP8,20H       
 
 ;	MOVF	__R_TEMP6,03H
@@ -1027,6 +994,9 @@ $5:
 __SBR_CALC_DISTANCE_EXIT:
 	RET
 	
+;;
+;;设置带通滤波器SCFCTL 增益，SUMCMP寄存器比较值
+;;
 __SBR_GAIN_CTRL:
 	MOV	A,__R_GAIN_CNT
 	SUB	A, 30
@@ -1055,6 +1025,9 @@ L_CHANGE_GAIN:
 __SBR_GAINCTRL_EXIT:
 	RET
 	
+;;
+;;__R_TIMER_GAIN这是调整增益和比较值的计数变量，范围:0~30,每400us加1，作为调整参数
+;;
 __SBR_REF_CTRL:
 	CLR		__F_TIMER		
 CHANG_GAIN:	
@@ -1080,6 +1053,12 @@ L_REF_CTRL_EXIT:
 ;;MAXRUNTIME: 
 ;;INPUT: NONE
 ;;OUTPUT: NONE
+;;Bit 1 FRESET： 该 FRESET 位用于对齐 FIFO 读地址和写地址。当完成对齐，该位将自动清为 " 
+;;		0 "。注意，该位只有在 FSTART 位设为“0”时才有效。
+;;Bit 0 FSTART：自动包络功能模式选择
+;;		1：自动包络处理机制通过硬件自动开始向 FIFO 写入数据或从 FIFO 读取数据
+;;		0：自动包络处理机制停止向 FIFO 写入数据或从 FIFO 读取数据。通过应用程
+;;		序可以手动对 FIFO 写入数据或从 FIFO 读取数据。
 ;*************************************************************
 __INI_FIFO:
 	CLR	FSTART
@@ -1183,12 +1162,12 @@ __SBR_MULTIi_3BY2:
 	;....................
 L_NeEXTADDB1:
 	CLR	C
-	RRC	__R_TEMP8
+	RRC	__R_TEMP8  ;; 2位被乘数:__R_TEMP8(HIGH)__R_TEMP9(LOW) 
 	RRC	__R_TEMP9
 	SNZ	C
 	JMP	L_EXITDIVIDEB1
 	MOV	A,__R_TEMP7
-	ADDM	A,__R_TEMP4
+	ADDM	A,__R_TEMP4 ;;累加乘法结果:__R_TEMP4...__R_TEMP0
 	MOV	A,__R_TEMP6
 	ADCM	A,__R_TEMP3
 	MOV	A,__R_TEMP5
@@ -1199,8 +1178,8 @@ L_NeEXTADDB1:
 	ADCM	A,__R_TEMP0
 L_EXITDIVIDEB1:
 	CLR	C
-	RLC	__R_TEMP7
-	RLC	__R_TEMP6
+	RLC	__R_TEMP7  ;;单次乘法结果：__R_TEMP7(L)...__R_TEMPA (H)
+	RLC	__R_TEMP6  ;;3位乘数：__R_TEMP7(L)...__R_TEMP5 (H)
 	RLC	__R_TEMP5
 	RLC	__R_TEMPB
 	RLC	__R_TEMPA
@@ -1225,8 +1204,9 @@ L_EXITDIVIDEB1:
 ;*************************************************************
 __SBR_CALC_SOUND_SPEED:
 	MOVF	__R_TEMP8,R_TEMPERATURE_H
-	MOVF	__R_TEMP9,R_TEMPERATURE_L		;C=C0+0.607*T  C0  0�� �ٶ� 33145cm/s  										
+	MOVF	__R_TEMP9,R_TEMPERATURE_L		;C=C0+0.607*T  C0  0度 速度 33145cm/s  										
 
+IF 0 ;;TEST-------------
 	CLR	__R_TEMP5
 	CLR	__R_TEMP6
 	MOVF	__R_TEMP7,61
@@ -1238,11 +1218,45 @@ __SBR_CALC_SOUND_SPEED:
 	ADDM	A,__R_SOUND_SPEED_L
 	MOV		A,	__R_TEMP3
 	ADCM	A,__R_SOUND_SPEED_H	
+	
+ELSE
+	;;提高精度
+	;;C=C0+0.607*T  C0为环境温度0摄氏度时的超声波速度33145cm/s  
+	CLR		__R_TEMP5
+	MOVF	__R_TEMP6, HIGH(607)
+	MOVF	__R_TEMP7, LOW(607)
+	CALL	__SBR_MULTIi_3BY2
+	
+	MOVF	__R_TEMP5, __R_TEMP4
+	MOVF	__R_TEMP4, __R_TEMP3
+	MOVF	__R_TEMP3, __R_TEMP2
+	CLR		__R_TEMP2
+	CLR		__R_TEMP1
+	CLR		__R_TEMP0
+	
+	CLR		__R_TEMP6
+	CLR		__R_TEMP7
+	MOVF	__R_TEMP8, 0AH	
+	CALL	__SBR_DIVIDE_6BY3
+	
+	MOVF	__R_SOUND_SPEED_H,HIGH(31931)	;TEST+ 31925CM/S是温度为-20摄氏度的声速
+	MOVF	__R_SOUND_SPEED_L,LOW(31931)	;TEST+
+	MOV		A,__R_TEMP5
+	ADDM	A,__R_SOUND_SPEED_L
+	MOV		A,	__R_TEMP4
+	ADCM	A,__R_SOUND_SPEED_H	
+	
+	;;TEST++
+;	MOVF	__R_SOUND_SPEED_H,HIGH(34844)	;TEST+
+;	MOVF	__R_SOUND_SPEED_L,LOW(34844)	;TEST+
+	
+ENDIF ;;TEST++++++++++++++++++
+		
 	RET
 ;....................................................
 ;16bit binary to BCD
 ;input:__R_TEMP1(LSB),ACC(MSB)
-;output:__R_TEMP0(��λ),__R_TEMP1(ʮλ),__R_TEMP2(��λ),__R_TEMP3(ǧλ),__R_TEMP4(��λ)
+;output:__R_TEMP0(个位),__R_TEMP1(十位),__R_TEMP2(百位),__R_TEMP3(千位),__R_TEMP4(万位)
 ;effect:__R_TEMP5
 ;....................................................
 __SBR_Bin_to_BCD_16bit:
@@ -1280,7 +1294,43 @@ __s_sys_BCD_Loop:
 	ANDM	A,__R_TEMP0
 	ANDM	A,__R_TEMP2
 	ANDM	A,__R_TEMP4
-	RET        
+	RET  
+	
+IF 1 ;;TEST+++++++++++++++++
+__MY_FIFO_INT:
+	CLR FIFO10F
+	;;中断保存时间和取FIFOOUT数据
+	SET		T0PAU	;;	暂停TM0计数器,保存时间							
+	MOVF	__R_DET_TIME_H, __R_TIMER_100US 
+	MOVF	__R_TIME_M, TM0DH
+	MOVF	__R_DET_TIME_L, TM0DL
+	CLR		T0PAU
+	IF 0 ;;
+	MOVF	__R_DATA[0],FIFOOUT
+	MOVF	__R_DATA[1],FIFOOUT
+	MOVF	__R_DATA[2],FIFOOUT
+	MOVF	__R_DATA[3],FIFOOUT
+	MOVF	__R_DATA[4],FIFOOUT	
+	MOVF	__R_DATA[5],FIFOOUT
+	MOVF	__R_DATA[6],FIFOOUT
+	MOVF	__R_DATA[7],FIFOOUT
+	MOVF	__R_DATA[8],FIFOOUT
+	MOVF	__R_DATA[9],FIFOOUT	
+	;;读取完FIFIOUT后，应立即初始化FIFO并启动自动包络处理向FIFO写入数据
+	CLR	FSTART
+	CLR	FULL
+	SET	FRESET
+	CLR	FRESET
+
+	SET	    FSTART
+	ENDIF
+	SET F_MY_TEST
+	
+MY_FIFO_INT_EXIT:
+	JMP	__MY_FIFO_INT_BACK
+ENDIF ;;TEST++++++++++++++++	
+	
+	      
 ;-----------------------------------------------
 ;;**************************************************
 ;; delay_SUB
@@ -1309,7 +1359,6 @@ $1:
 
 ;ROMBANK 0 CONFIG
 
-
 PUBLIC __SYS_TM0_INT
 PUBLIC __SBR_GET_BIAS
 PUBLIC __SBR_GET_DVCM
@@ -1322,7 +1371,7 @@ PUBLIC __SBR_MULTIi_3BY2
 PUBLIC __SBR_DELAY_1MS
 PUBLIC __SBR_CALC_SOUND_SPEED
 PUBLIC __SBR_SYS_INIT
-PUBLIC L__SBR_DISTANCE_MEASURE_EXIT
+PUBLIC L_ULTRASONIC_DISTANCE_MEASURE_EXIT
 PUBLIC __SBR_Bin_to_BCD_16bit
 
 PUBLIC __R_DATA				
@@ -1374,5 +1423,7 @@ PUBLIC __R_SOUND_SPEED_L
 PUBLIC __F_CONTINUOUS_NOISE
 PUBLIC	__F_DISTANCE_FAIL
 
-
+IF 1 ;;TEST+++++++++
+PUBLIC __MY_FIFO_INT
+ENDIF ;;TEST++++++++
 ;END	

@@ -3,9 +3,9 @@ INCLUDE MACRO.INC
 INCLUDE USER.INC
 INCLUDE MEASURE.INC
 
-#define	RX	PA6     ;������TX
+#define	RX	PA6     ;主机的TX
 #define	P_RX	PA6
-#define	TX	PA4     ;������RX
+#define	TX	PA4     ;主机的RX
 #define	P_TX	PA4
 
 RAMBANK	0	RAMBANK0
@@ -15,12 +15,13 @@ RX_DATA	    DB	?
 ;TX_DATA	DB	?
 R_DELAY_TIME	DB	?
 R_RX_CNT	DB	?
-__BUFF_DATA	DB	    5	DUP(0)
+;;__BUFF_DATA	DB	    5	DUP(0) ;;TEST-
+__BUFF_DATA	DB	    7	DUP(0) ;;TEST+
 R_BUFF_CNT      	DB	?
 R_TM1DL_BUF	DB	?
 R_TM1DH_BUF	DB	?
 F_FULL         DBIT    
-bus	.SECTION	at 2E0h 'CODE'	;190h
+bus	.SECTION	at 2F0h 'CODE'	;190h
 
 
 ;SBR_UART_READ:
@@ -30,7 +31,7 @@ bus	.SECTION	at 2E0h 'CODE'	;190h
 ;	MOVF	MP0,OFFSET __BUFF_DATA
 ;	MOVF    R_BUFF_CNT , 1;4
 ;_OVER_CHECK:	
-;	; //30sû�в��������˯��
+;	; //30s没有操作则进入睡眠
 ;	; // WAIT TO SLEEP
 ;	;MOVF	__R_TIMER_20MS,65H
 ;	
@@ -43,9 +44,9 @@ bus	.SECTION	at 2E0h 'CODE'	;190h
 ;;	;JMP	_KEEP_GOING
 ;;	
 ;;	; // WDT = 8.2s
-;;	; //����״̬
+;;	; //休眠状态
 ;;	
-;;	; �ж�
+;;	; 中断
 ;;	CLR	EMI
 ;;	CLR	T0ON 
 ;;	
@@ -111,7 +112,7 @@ bus	.SECTION	at 2E0h 'CODE'	;190h
 ;;	SET	EMI
 ;;	NOP
 ;;	
-;	; //�ָ�cpu״̬
+;	; //恢复cpu状态
 ;_KEEP_GOING:
 ;    CLR	EMI
 ;	CLR	WDT
@@ -123,8 +124,8 @@ bus	.SECTION	at 2E0h 'CODE'	;190h
 ;	CLR	__R_TIMER_20MS
 ;	;CLR	__R_TIMER_5S
 ;	
-;;��ʱ104us  16M  ÿ������ = 3 * 1 / 16 = 0.1875 us 
-;;104us	/  0.1875 us =  554.666  ȡ555
+;;延时104us  16M  每个周期 = 3 * 1 / 16 = 0.1875 us 
+;;104us	/  0.1875 us =  554.666  取555
 ;;	CLR	EMI
 ;	MOVF	R_DELAY_TIME,105
 ;	CLR	    WDT	;1
@@ -212,36 +213,36 @@ SBR_BUS_RECIVE_DATA:
 ;-------------------------------------;	
 ; GET CLK
 $0:
-	over_time	12		;���r1.2ms
+	over_time	12		;超時1.2ms
 	JMP	SBR_BUS_RECIVE_DATA_EXIT
 	
-	SNZ	P_RX			;�ȴ���ʼλ����			
+	SNZ	P_RX			;等待起始位结束			
 	JMP	$0
 
 	CLR	T1ON
-	MOVF	TM1AL,250		;ѧϰ1010 ���е�ʱ��	104*4=416 /255 =1 --153
-	MOVF	TM1AH,2			;760us  > 150*4  ����
+	MOVF	TM1AL,250		;学习1010 所有的时间	104*4=416 /255 =1 --153
+	MOVF	TM1AH,2			;760us  > 150*4  够用
 	SET	T1ON
 	
 	
 	clr	__R_TIMER_100US
 
-$1:					;�ȴ�1 ����
-	over_time	12		;���r1.2ms
+$1:					;等待1 结束
+	over_time	12		;超時1.2ms
 	JMP	SBR_BUS_RECIVE_DATA_EXIT
 	SZ	P_RX
 	JMP	$1
 	
 	clr	__R_TIMER_100US
 	
-$2:					;�ȴ�0 ����
-	over_time	12		;���r1.2ms
+$2:					;等待0 结束
+	over_time	12		;超時1.2ms
 	JMP	SBR_BUS_RECIVE_DATA_EXIT
 	SNZ	P_RX
 	JMP	$2	
 
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;�õ�2bit����ʱ�䣬����󱣴�
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;得到2bit持续时间，运算后保存
 	CLR	T1ON
 	MOVF	R_TM1DH_BUF,TM1DH
 	MOVF	R_TM1DL_BUF,TM1DL
@@ -250,9 +251,9 @@ $2:					;�ȴ�0 ����
 	RRC	R_TM1DH_BUF
 	RRC	R_TM1DL_BUF
 
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;�õ�ʱ��֮�󱣴棬���β����ͷ������ݾ��Ը�ʱ��Ϊ׼
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;得到时钟之后保存，本次测量和返回数据均以改时钟为准
 	MOVF	TM1AL,R_TM1DL_BUF
-	MOVF	TM1AH,R_TM1DH_BUF		;�õ�������ʱ�Ӻ󣬿�ʼ��������
+	MOVF	TM1AH,R_TM1DH_BUF		;得到波特率时钟后，开始接收数据
 	
 	clr	C
 	RRC	R_TM1DH_BUF
@@ -302,7 +303,7 @@ $5:
 	CLR	TA1F	
 	
 	INC	RX_DATA
-	MOVF	R_TM1DH_BUF,TM1AH	;����r�g�O��
+	MOVF	R_TM1DH_BUF,TM1AH	;保存時間設置
 	MOVF	R_TM1DL_BUF,TM1AL
 
 	
@@ -313,9 +314,15 @@ SBR_BUS_RECIVE_DATA_EXIT:
 
 
 SBR_UART_SND:
-
+	
+	IF __UART_DEBUG__
+	;;串口波特率9600bps
+	MOVF	TM1AL,103;;test+
+	MOVF	TM1AH,0;;test+
+	ELSE
 	MOVF	TM1AL,R_TM1DL_BUF
 	MOVF	TM1AH,R_TM1DH_BUF
+	ENDIF	
 
 	MOVF	R_RX_CNT,8
 	
@@ -342,10 +349,10 @@ $1:
 	RR	RX_DATA
 	SDZ	R_RX_CNT
 	JMP	$0
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;����У��λ
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;发送校验位
 	
 	
-	SET	P_TX			;����ֹͣλ
+	SET	P_TX			;发送停止位
 	SNZ	TA1F
 	JMP	$-1
 	clr	TA1F

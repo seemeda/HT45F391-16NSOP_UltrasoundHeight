@@ -37,8 +37,8 @@ __R_HEIGHT_DISTANCE_L	   	DB		?
 __R_HEIGHT_DISTANCE		   DB		?
 __R_MAX_DISTANCE_H		   DB		?
 __R_MAX_DISTANCE_L		   DB		?
-__BUFF_DISTANCE_L           	 DB	    24	DUP(0)
-__BUFF_DISTANCE_H           	 DB	    24	DUP(0)
+__BUFF_DISTANCE_L           	 DB	    24	DUP(0)   ;;存放24组距离的低位
+__BUFF_DISTANCE_H           	 DB	    24	DUP(0)   ;;存放24组距离的高位
 __BUFF_DISTANCE_ADDRH        	DB	    ?
 __BUFF_DISTANCE_ADDRL       	 DB	    ?
 __R_COURT                   	 DB	    ?
@@ -48,6 +48,11 @@ __R_DISTANCE_TIME		   DB		?
 __R_ZERO                   	DB		?
 
 __R_TOM			           DB		?
+
+;;-----------------
+F_MY_TEST				DBIT ;;TEST+
+F_MY_TEST_VAR			DBIT ;;TEST+
+;;--------------
 
 F_MIN_MAX				DBIT
 f_cmd_distance			DBIT			;transmit distance data command
@@ -64,9 +69,11 @@ CS	.SECTION	at  000H 'CODE'
 	ORG		000H
 	JMP		main_start
 	ORG		004H
+	;;JMP AEC_INT
 	RETI
 	ORG		008H
-	RETI
+	JMP		FIFO_INT ;;TEST+
+	;;RETI ;;TEST-
 	ORG		00CH
 	JMP		CCRA_CTM_INT		
 	ORG		010H
@@ -128,7 +135,10 @@ Main_Loop:
 
 	call	TM0_internal_setting	
 	call	SBR_INIT_TM1_UART
-
+	
+IF __UART_DEBUG__ ;;TEST
+	NOP
+ELSE
 wait_1ms_lowpulse:	
 	
 	clr	__R_TIMER_100US
@@ -185,9 +195,19 @@ Read_data_command:
 	snz	Z
 	jmp	wait_1ms_lowpulse
 ;jmp	wait_1ms_lowpulse
+ENDIF ;;TEST
+
+;;
+;;Det_Loop: 循环进行测温，发送触发超波40KHZ测距，执行Det_Loop循环24次得到24组数据,退出并处理数据.
+;;可以修改时间，但不能连续发送太快，会有相互干扰
+;;__F_TIMEUP延时20ms,这里延时20ms和 L_ULTRASONIC_DISTANCE_MEASURE_EXIT: 也延时20ms，
+;;所以每发射4个触发脉冲测量一次距离至少需要40ms为一个周期,
+;;	即发送脉冲测距到下次再次发送脉冲测距时间差40ms。
+;;因此：
+;;完成24组测量距离需要时间为:40ms*24=960ms,即一个大周期至少为960ms
 Det_Loop: 
-	call	 SBR_INIT_TM1_T
-	call	TM0_external_setting
+	call	 SBR_INIT_TM1_T	;;定时1.02ms
+	call	TM0_external_setting	;;定时计数，外部时钟100KHz，定时器初始化100us
 
     CLR	    T0ON
 	SET	    T0ON
@@ -195,9 +215,9 @@ Det_Loop:
 $0:
 	CLR		WDT	
 	MOV     A, __R_TIMER_20MS
-	SUB     A, 1 
+	SUB     A, 1
 	SNZ     C 
-	JMP     $0
+	JMP     $0 ;;delay 20ms
 	CLR     __R_TIMER_20MS
 	JMP     L_GET_RES_DISCHARGE_TIME 
 L_GET_RES_DISCHARGE_TIME:
@@ -218,11 +238,16 @@ L_GET_RES_DISCHARGE_TIME:
     
 L_DISTANCE_MEASURE:	
     
-	MOVF	__R_GENERATE_ULTRASONIC_NUM,4;4 
+	MOVF	__R_GENERATE_ULTRASONIC_NUM,4 ;4 
 	CALL	__SBR_DISTANCE_MEASURE	
-	CALL	__SBR_CALC_DISTANCE
+	
+	IF __SAVE_TIME__
+	CALL 	__MY_CALC_TIME ;;TEST+
+	ELSE
+	CALL	__SBR_CALC_DISTANCE ;;TEST-
+	ENDIF ;;ENDIF __SAVE_TIME__
 ;;;;;;;;;;;;;
-   
+;;存放24组测量到的距离数据 （也可以修改为存放24组时间）  
     MOV     A , OFFSET __BUFF_DISTANCE_H     
     ADD     A , __BUFF_DISTANCE_ADDRH
     MOV     MP0 , A
@@ -274,6 +299,9 @@ EXSORT_LOOP:
 ;	MOVF    __R_COURT,23
 ;	MOVF     MP0 , OFFSET __BUFF_DISTANCE_L 
 ;    MOVF     MP1 , OFFSET __BUFF_DISTANCE_H
+;;
+;;24组距离（时间），把距离按从小到大顺序排序
+;;
 INSORT_LOOP: 
     CLR	     WDT
     CLR     __R_TEMP0
@@ -315,7 +343,7 @@ $2:
     INC    MP0
 $3:
     SDZ     __R_COURT
-	JMP		INSORT_LOOP 
+	JMP		INSORT_LOOP
 	SDZ     __R_DISTANCE_TIME 
 	JMP		EXSORT_LOOP 
 	MOVF    __R_DISTANCE_TIME, 16	
@@ -325,13 +353,10 @@ $3:
     MOV     A , OFFSET __BUFF_DISTANCE_H   
     ADD     A,4
 	MOV     MP1 ,A
-;	MOVF    __R_DISTANCE_TIME, 24	
-;	MOV     A , OFFSET __BUFF_DISTANCE_L    
-;	MOV      MP0 ,A
-;    MOV     A , OFFSET __BUFF_DISTANCE_H      
-;	MOV      MP1 ,A
-;	MOVF	RX_DATA,0aah
-;	CALL	SBR_UART_SND
+;;
+;; 这里$4循环累加24组距离(或者是时间)中16组数据，从第四组开始，即：第4组~19组，
+;; 把累加距离(或者时间)存放在__R_HEIGHT_DISTANCE, __R_HEIGHT_DISTANCE_H, __R_HEIGHT_DISTANCE_L
+;;
 $4:	
     CLR	     WDT
     MOV     A,IAR0
@@ -355,7 +380,10 @@ $6:
     INC    MP1
     SDZ     __R_DISTANCE_TIME
 	JMP		$4
-	
+
+;;
+;;下面求累加16组距离(时间)的平均值
+;;	
 	CLR     C      
 	RRC     __R_HEIGHT_DISTANCE                       
 	RRC     __R_HEIGHT_DISTANCE_H
@@ -377,7 +405,7 @@ $6:
 ;	RRC     __R_HEIGHT_DISTANCE_H
 ;	RRC     __R_HEIGHT_DISTANCE_L
 
-	;SNZ     __F_GET_DISTANCE    ;;;;;�ⲻ�����룬��ô����Ϊ0�����Բ��ܼ�29
+	;SNZ     __F_GET_DISTANCE    ;;;;;测不到距离，那么距离为0，所以不能减29
 ;	JMP     $5
 ;	MOV    A, __R_HEIGHT_DISTANCE_L
 ;	SUB    A,29
@@ -388,7 +416,17 @@ $6:
 	
 $5:	
 
-;***********�����@ʾ******************
+;;TEST++++++++++++
+IF __SAVE_TIME__
+
+	MOVF	__R_TIME_H,__R_HEIGHT_DISTANCE_H
+	MOVF	__R_TIME_L, __R_HEIGHT_DISTANCE_L
+	CALL	MY_CALC_DISTANCE
+	
+ENDIF
+;;TEST++++++++++++++++++++
+
+;***********數據顯示******************
 
     MOVF    __R_DISTANCE_H ,__R_HEIGHT_DISTANCE_H
     MOVF    __R_DISTANCE_L ,__R_HEIGHT_DISTANCE_L
@@ -400,11 +438,15 @@ $5:
 ;	MOVF	RX_DATA,__R_ADCOMPARE_VALUE 
 ;	CALL	SBR_UART_SND
 ;   JMP		Main_Loop
+
     CALL    L_MANAGE_DATA
 ;	JMP	    L_TRANSMIT_DATA
 
 ;---------------------------------------------------	
-
+;;
+;;测量身高范围:5cm~200cm
+;;
+IF 0 ;;TEST+
 	clr	C
 	mov	a,low(2008)
 	sub	a,__R_MAX_DISTANCE_L
@@ -426,15 +468,21 @@ $5:
 	sz	C
 ;	jmp	Main_Loop	
 	jmp	Send_hight_0_temputer
+ENDIF ;;TEST+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;	 	
 L_TRANSMIT_DATA:
 
 	clr	EMI			
 
 	call	SBR_INIT_TM1_UART	
-	
+IF 1	;;TEST++
 	MOVF	   MP0,OFFSET __BUFF_DATA
-	MOVF    __R_TEMP2 , 5;8;12
+	IF __UART_DEBUG__
+	CLR		F_GET_TEMPERATURE_DATA
+	MOVF    __R_TEMP2 ,7	
+	ELSE
+	MOVF    __R_TEMP2 ,5
+	ENDIF
 $0:
     CLR     WDT
 	MOVF	RX_DATA,IAR0 
@@ -448,40 +496,184 @@ $0:
 	INC     MP0
 	SDZ	    __R_TEMP2
 	JMP     $0
-
-
+ENDIF ;;TEST+
+IF 0 & __UART_DEBUG__;;TEST+
+    MOVF    __R_TEMP2,24
+    MOVF     MP1 , OFFSET __BUFF_DISTANCE_H 
+$1:
+    CLR     WDT
+	MOVF	RX_DATA,IAR1 
+	CALL	SBR_UART_SND
+	INC     MP1
+	SDZ	    __R_TEMP2
+	JMP     $1
+	
+    MOVF    __R_TEMP2,24
+    MOVF     MP1 , OFFSET __BUFF_DISTANCE_L 
+$2:
+    CLR     WDT
+	MOVF	RX_DATA,IAR1 
+	CALL	SBR_UART_SND
+	INC     MP1
+	SDZ	    __R_TEMP2
+	JMP     $2	
+	
+ENDIF ;;TEST+++
 	
 	call	 SBR_INIT_TM1_T		
 	SET	EMI	
 	JMP		Main_Loop	
 	
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;���ݴ�������
+;;;数据处理函数
 L_MANAGE_DATA:	
     CLR		WDT	
+
+IF __DISTANCE_ADJ__
+FUN_DISTANCE_ADJ:
+	
+;	MOV 	A,high(1401)
+;	MOV		__R_DISTANCE_H,A
+;	MOV 	A,low(1401)
+;	MOV		__R_DISTANCE_L,A
+;; 测试出来的数据不准确，这里尝试调整距离(增减)
+	;;1):X>=120 && X<=200, -5MM
+		
+	;;2):X>200 && X<=1400, -12MM
+		
+	;;3):X>1400 && X<=1600, -5MM
+;;------------------x<=120 直接退出,x>=121 继续执行
+	CLR	__R_TEMP1
+	CLR	C
+	MOV	A,LOW(120)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(120)	
+	SBC	A,__R_DISTANCE_H
+	
+	SZ	C
+	JMP	FUN_DISTANCE_ADJ_EXIT
+;;------------------x<=1600 继续执行, x>=1601 直接退出
+	CLR	C
+	MOV	A,LOW(1600)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(1600)	
+	SBC	A,__R_DISTANCE_H
+	
+	SNZ	C
+	JMP	FUN_DISTANCE_ADJ_EXIT
+;;------------------1):X>120 && X<=200, -5MM	
+	CLR	C
+	MOV	A,low(200)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(200)	
+	SBC	A,__R_DISTANCE_H
+	
+	SZ	C
+	JMP	DISTANCE_SUB_5MM
+;;------------------2):X>200 && X<=950, -10MM	
+	CLR	C
+	MOV	A,LOW(950)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(950)	
+	SBC	A,__R_DISTANCE_H
+	
+	SZ	C
+	JMP	DISTANCE_SUB_10MM
+	
+;;------------------3):X>950 && X<=1150, -8MM	
+	CLR	C
+	MOV	A,LOW(1150)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(1150)	
+	SBC	A,__R_DISTANCE_H
+	
+	SZ	C
+	JMP	DISTANCE_SUB_8MM
+;;------------------4):X>1150 && X<=1600, -5MM	
+	CLR	C
+	MOV	A,LOW(1600)
+	SUB	A,__R_DISTANCE_L
+
+	MOV	A,HIGH(1600)	
+	SBC	A,__R_DISTANCE_H
+	
+	SZ	C
+	JMP	DISTANCE_SUB_5MM
+;;------------------
+DISTANCE_SUB_5MM:
+	MOV		A,5
+	MOV 	__R_TEMP1,A	
+	JMP	START_DISTANCE_ADJ
+DISTANCE_SUB_8MM:
+	MOV		A,8
+	MOV 	__R_TEMP1,A	
+	JMP	START_DISTANCE_ADJ	
+DISTANCE_SUB_10MM:
+	MOV		A,10
+	MOV 	__R_TEMP1,A	
+	JMP	START_DISTANCE_ADJ		
+START_DISTANCE_ADJ:
+	CLR		C
+	MOV		A,__R_DISTANCE_L
+	SUB		A,__R_TEMP1
+	MOV 	__R_DISTANCE_L,A
+	CLR 	__R_TEMP0
+	MOV		A,__R_DISTANCE_H	
+	SBC		A,__R_TEMP0
+	MOV 	__R_DISTANCE_H,A
+	SZ		C
+	JMP 	FUN_DISTANCE_ADJ_EXIT
+	CLR		__R_DISTANCE_H
+	CLR		__R_DISTANCE_L
+FUN_DISTANCE_ADJ_EXIT:
+ENDIF
 
     MOVF   __R_MAX_DISTANCE_H,  __R_DISTANCE_H
     MOVF   __R_MAX_DISTANCE_L,  __R_DISTANCE_L
     MOVF   __R_TEMP1 ,__R_MAX_DISTANCE_L
 ;====================================================== 
-    sub	a,78
+IF 1 
+    ;;sub	a,78 ;;TEST-
+    sub	a,0 ;;TEST-
     mov		__R_TEMP1 ,A
     mov	__R_MAX_DISTANCE_L,a
     
-    
+
     clr	__r_temp0
     
     MOV    A, __R_MAX_DISTANCE_H
 	sbc	a,__r_temp0
 	mov	__R_MAX_DISTANCE_H,a
+ENDIF
+
+
 ;======================================================
     CALL   __SBR_Bin_to_BCD_16bit
+    IF __UART_DEBUG__ ;;TEST+ 
     MOVF   __BUFF_DATA[0] , __R_TEMP3
     MOVF   __BUFF_DATA[1] , __R_TEMP2
     MOVF   __BUFF_DATA[2] , __R_TEMP1
     MOVF   __BUFF_DATA[3] , __R_TEMP0
     MOVF   __BUFF_DATA[4] , R_TEMPERATURE_L
-    
+    MOVF   __BUFF_DATA[5] , __R_SOUND_SPEED_H
+    MOVF   __BUFF_DATA[6] , __R_SOUND_SPEED_L
+;    MOVF   __BUFF_DATA[2] , __R_TIME_H
+;    MOVF   __BUFF_DATA[3] , __R_TIME_L
+;    MOVF   __BUFF_DATA[4] , __R_SOUND_SPEED_L    
+    ELSE 
+    MOVF   __BUFF_DATA[0] , __R_TEMP3
+    MOVF   __BUFF_DATA[1] , __R_TEMP2
+    MOVF   __BUFF_DATA[2] , __R_TEMP1
+    MOVF   __BUFF_DATA[3] , __R_TEMP0
+    MOVF   __BUFF_DATA[4] , R_TEMPERATURE_L
+
+    ENDIF ;;TEST+
+
     
  ;   MOVF   __BUFF_DATA[0] , 'S'
 ;    MOVF   __BUFF_DATA[1] , '='
@@ -498,7 +690,7 @@ L_MANAGE_DATA:
 ;    MOV     A , 030H
 ;    ADDM    A , __R_TEMP0
 ;    MOVF    __BUFF_DATA[6] , __R_TEMP0
-;    MOVF    __BUFF_DATA[7] ,'\n'    ;����
+;    MOVF    __BUFF_DATA[7] ,'\n'    ;换行
  
 L_MANAGE_DATA_EXIT:   
     RET	
@@ -531,6 +723,135 @@ __SYS_TM0_INT_BACK:
 
 ;*****************************************************
 
+;*****************************************************
+IF  1
+AEC_INT:
+	PUSH
+;	SET		PB2 ;;TEST+
+;	CLR ENVCMPF
+;	SET F_MY_TEST
+;	SET		T0PAU	;;	暂停TM0计数器,保存时间					
+;	MOVF	__R_TIME_H,__R_TIMER_100US 
+;	MOVF	__R_TIME_M,TM0DH
+;	MOVF	__R_TIME_L,TM0DL
+;	CLR		T0PAU   ;;	运行TM0计数器
+__SYS_AEC_INT_BACK:
+	CLR ENVCMPE
+	POP
+	RETI
+	
+	
+FIFO_INT:
+	PUSH
+						
+	JMP __MY_FIFO_INT
+	
+__MY_FIFO_INT_BACK:
+	POP
+	RETI
+ENDIF
+;;*****************************************************
+
+
+IF 1 ;;TEST+---------------------
+
+__MY_CALC_TIME:	
+	CLR	WDT
+	CLR	__R_DISTANCE_L
+	CLR	__R_DISTANCE_H
+	SNZ	__F_GET_DISTANCE
+	JMP	__MY_CALC_TIME_EXIT
+;=============================================================
+;;TEST+
+;;s = v*T/2
+;;INPUT: __R_TIME_H,__R_TIME_L
+;;		 __R_SOUND_SPEED_H,__R_SOUND_SPEED_L
+;;	v(cm/s)
+;;	T(时间__R_TIME_L的精度10us，__R_TIME_H的精度100us)
+;;OUTPUT:
+;;	s = v*T/20000 则距离的单位为mm
+L_CALC_TIME:
+	CLR		__R_TEMP8
+	MOV		A,10
+	CLR		__R_TEMP8	
+	MOV		__R_TEMP9,A
+	CLR		__R_TEMP5
+	CLR		__R_TEMP6
+	MOVF	__R_TEMP7,__R_TIME_H
+	CALL	__SBR_MULTIi_3BY2
+	MOV		A,__R_TIME_L
+	ADDM	A,__R_TEMP4
+	MOV		A,0
+	ADCM	A,__R_TEMP3	
+				
+	MOVF	__R_TEMP7,__R_TEMP4
+	MOVF	__R_TEMP6,__R_TEMP3
+	MOVF	__R_TEMP5,__R_TEMP2
+	MOVF	__R_DISTANCE_L,__R_TEMP4
+	MOVF	__R_DISTANCE_H,__R_TEMP3 
+	
+;	MOVF	__R_TEMP8,__R_SOUND_SPEED_H
+;	MOVF	__R_TEMP9,__R_SOUND_SPEED_L
+;	CALL	__SBR_MULTIi_3BY2		
+;	MOVF	__R_DISTANCE_L,__R_TEMP5
+;	MOVF	__R_DISTANCE_H,__R_TEMP4 
+
+	IF 1
+	;;接收回波前沿到达时刻：幅度峰值时刻时间减去固定周期数(测试大概12个周期，12*25us=300us)
+	CLR		C
+	MOV		A,__R_DISTANCE_L
+	SUB		A,30
+	MOV 	__R_DISTANCE_L,A
+	CLR 	__R_TEMP0
+	MOV		A,__R_DISTANCE_H	
+	SBC		A,__R_TEMP0
+	MOV 	__R_DISTANCE_H,A
+	SZ		C
+	JMP 	__MY_CALC_TIME_EXIT
+	CLR		__R_DISTANCE_H
+	CLR		__R_DISTANCE_L
+	ENDIF 
+
+	
+__MY_CALC_TIME_EXIT:
+	RET
+	
+	
+MY_CALC_DISTANCE:
+
+	MOVF	__R_TEMP7,__R_TIME_L
+	MOVF	__R_TEMP6,__R_TIME_H
+	MOVF	__R_TEMP5,0
+	MOVF	__R_TEMP8,__R_SOUND_SPEED_H
+	MOVF	__R_TEMP9,__R_SOUND_SPEED_L
+	CALL	__SBR_MULTIi_3BY2		
+	MOVF	__R_TEMP5,__R_TEMP4
+	MOVF	__R_TEMP4,__R_TEMP3
+	MOVF	__R_TEMP3,__R_TEMP2
+	MOVF	__R_TEMP2,__R_TEMP1
+	MOVF	__R_TEMP1,__R_TEMP0
+	CLR	__R_TEMP0
+																	
+	MOVF	__R_TEMP6,00H         
+	MOVF	__R_TEMP7,4EH	;;‭4E20H = 20000‬	
+	MOVF	__R_TEMP8,20H       
+	CALL	__SBR_DIVIDE_6BY3
+	
+;	MOVF	__R_DISTANCE_L,__R_TEMP5
+;	MOVF	__R_DISTANCE_H,__R_TEMP4 
+	MOVF	__R_HEIGHT_DISTANCE_L,__R_TEMP5
+	MOVF	__R_HEIGHT_DISTANCE_H,__R_TEMP4 
+	
+__MY_CALC_DISTANCE_EXIT:
+	RET
+		
+ENDIF ;;TEST+-------------
+;*****************************************************
+
+;;定时100us
+;;定时/计数模式  比较器A匹配
+;;外部时钟100KHz
+;;
 TM0_external_setting:
 
 	MOVF	TM0AL,10 ;10  ;10 100K  200  2M 
@@ -549,6 +870,10 @@ TM0_internal_setting:
 	
 	ret
 
+
+;;
+;;定时模式: A匹配，1.02ms
+;;
 SBR_INIT_TM1_T:
 	MOVF	TM1AL,255 ;255				;255
 	MOVF	TM1AH,0
@@ -556,6 +881,11 @@ SBR_INIT_TM1_T:
 	MOVF	TM1C1,11000001B		
 	RET
 	
+	
+;;
+;;fclk=fsys/16  -->周期1us
+;;比较匹配输出模式，输出无变化
+;;CCRP-占空比，CCRA-周期，比较器A匹配
 SBR_INIT_TM1_UART:
 
 	MOVF	TM1C0,28H
@@ -564,5 +894,13 @@ SBR_INIT_TM1_UART:
 	
 			
 public __SYS_TM0_INT_BACK
+
+;;-----------------
+public F_MY_TEST	;;TEST+
+PUBLIC	F_MY_TEST_VAR
+PUBLIC	__MY_FIFO_INT_BACK
+PUBLIC	__BUFF_DISTANCE_H
+;;--------------
+
 END
 
